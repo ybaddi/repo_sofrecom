@@ -1,0 +1,119 @@
+version: '3'
+
+# Définition des services
+services:
+  # Service de base de données MySQL
+  db:
+    image: mysql:8.0
+    container_name: wordpress_db
+    # Redémarrer automatiquement sauf si arrêté manuellement
+    restart: unless-stopped
+    # Variables d'environnement pour configurer MySQL
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword      # Mot de passe root MySQL (à changer en production!)
+      MYSQL_DATABASE: wordpress              # Nom de la base de données WordPress
+      MYSQL_USER: wordpress_user             # Utilisateur dédié à WordPress
+      MYSQL_PASSWORD: wordpress_password     # Mot de passe de l'utilisateur (à changer en production!)
+    # Volumes pour persistance des données et configuration personnalisée
+    volumes:
+      - db_data:/var/lib/mysql               # Volume pour les données MySQL
+      - ./mysql-conf:/etc/mysql/conf.d       # Configuration MySQL personnalisée (optionnel)
+    # Configuration réseau
+    networks:
+      - wordpress_network
+    # Limites de ressources pour éviter une surconsommation
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    # Variables de contrôle de santé
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Service WordPress
+  wordpress:
+    image: wordpress:latest
+    container_name: wordpress_app
+    depends_on:
+      - db
+    restart: unless-stopped
+    # Variables d'environnement pour configurer WordPress
+    environment:
+      WORDPRESS_DB_HOST: db                  # Nom du service de base de données
+      WORDPRESS_DB_USER: wordpress_user      # Utilisateur de la base de données
+      WORDPRESS_DB_PASSWORD: wordpress_password  # Mot de passe de l'utilisateur (doit correspondre à celui défini pour MySQL)
+      WORDPRESS_DB_NAME: wordpress           # Nom de la base de données
+      # Configuration optionnelle pour l'installation automatique
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_MEMORY_LIMIT', '256M');
+        define('WP_MAX_MEMORY_LIMIT', '512M');
+    # Volumes pour persistance du code et des uploads
+    volumes:
+      - wordpress_data:/var/www/html         # Données WordPress
+      - ./wp-content:/var/www/html/wp-content  # Thèmes, plugins et uploads personnalisés
+    # Mappage de ports: port_externe:port_interne
+    ports:
+      - "80:80"                              # Exposer WordPress sur le port 80
+    networks:
+      - wordpress_network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+    # Contrôle de santé du service WordPress
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+
+  # Service PhpMyAdmin (optionnel, pour gérer MySQL via une interface web)
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: wordpress_phpmyadmin
+    depends_on:
+      - db
+    restart: unless-stopped
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: rootpassword
+      UPLOAD_LIMIT: 100M                     # Limite de taille pour les uploads
+    ports:
+      - "8080:80"                            # Exposer PhpMyAdmin sur le port 8080
+    networks:
+      - wordpress_network
+
+  # Service pour la mise en cache Redis (optionnel, améliore les performances)
+  redis:
+    image: redis:alpine
+    container_name: wordpress_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - wordpress_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# Définition des volumes pour la persistance des données
+volumes:
+  db_data:
+    name: wordpress_db_data
+  wordpress_data:
+    name: wordpress_app_data
+  redis_data:
+    name: wordpress_redis_data
+
+# Définition des réseaux pour isoler les services
+networks:
+  wordpress_network:
+    driver: bridge
